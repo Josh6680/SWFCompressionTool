@@ -2,19 +2,23 @@
 using System.IO;
 using System.Linq;
 using Ionic.Zlib;
+using LZMADecoder = SevenZip.Compression.LZMA.Decoder;
 
 namespace SWFCompressionTool
 {
 	static class Program
 	{
 		private const int HeaderTypeLength = 3;
-		private const int HeaderSizeLength = 5;
-		private const int HeaderLength = HeaderTypeLength + HeaderSizeLength;
+		private const int HeaderVersionLength = 1;
+		private const int HeaderSizeLength = 4;
+		private const int HeaderLZMACompressedSizeLength = 4;
+		private const int HeaderLength = HeaderTypeLength + HeaderVersionLength + HeaderSizeLength;
 		private const string FileCompressed = "_compressed";
 		private const string FileUncompressed = "_uncompressed";
 
 		private static readonly byte[] HeaderCWS = { (byte)'C', (byte)'W', (byte)'S' };
 		private static readonly byte[] HeaderFWS = { (byte)'F', (byte)'W', (byte)'S' };
+		private static readonly byte[] HeaderZWS = { (byte)'Z', (byte)'W', (byte)'S' };
 
 		private static int Main(string[] args)
 		{
@@ -51,7 +55,14 @@ namespace SWFCompressionTool
 			{
 				FileInfo fileInfo = new FileInfo(fileName);
 				string targetFileName = Path.Combine(Path.GetDirectoryName(fileInfo.FullName), Path.GetFileNameWithoutExtension(fileInfo.Name) + FileUncompressed + fileInfo.Extension);
-				Decompress(fileName, targetFileName);
+				DecompressZLIB(fileName, targetFileName);
+				Console.WriteLine("Wrote uncompressed copy to '" + targetFileName + "'.");
+			}
+			else if (header.SequenceEqual(HeaderZWS))
+			{
+				FileInfo fileInfo = new FileInfo(fileName);
+				string targetFileName = Path.Combine(Path.GetDirectoryName(fileInfo.FullName), Path.GetFileNameWithoutExtension(fileInfo.Name) + FileUncompressed + fileInfo.Extension);
+				DecompressLZMA(fileName, targetFileName);
 				Console.WriteLine("Wrote uncompressed copy to '" + targetFileName + "'.");
 			}
 			else if (header.SequenceEqual(HeaderFWS))
@@ -94,7 +105,7 @@ namespace SWFCompressionTool
 			File.WriteAllBytes(targetFileName, combined);
 		}
 
-		private static void Decompress(string fileName, string targetFileName)
+		private static void DecompressZLIB(string fileName, string targetFileName)
 		{
 			byte[] header = new byte[HeaderLength];
 			HeaderFWS.CopyTo(header, 0);
@@ -103,7 +114,7 @@ namespace SWFCompressionTool
 			using (BinaryReader reader = new BinaryReader(new FileStream(fileName, FileMode.Open)))
 			{
 				reader.BaseStream.Seek(HeaderTypeLength, SeekOrigin.Begin);
-				reader.Read(header, HeaderTypeLength, HeaderSizeLength);
+				reader.Read(header, HeaderTypeLength, HeaderVersionLength + HeaderSizeLength);
 
 				reader.BaseStream.Seek(HeaderLength, SeekOrigin.Begin);
 				byte[] data = new byte[reader.BaseStream.Length - HeaderLength];
@@ -114,6 +125,40 @@ namespace SWFCompressionTool
 			byte[] combined = CombineBytes(header, uncompressed);
 
 			File.WriteAllBytes(targetFileName, combined);
+		}
+
+		private static void DecompressLZMA(string fileName, string targetFileName)
+		{
+			byte[] header = new byte[HeaderLength];
+			HeaderFWS.CopyTo(header, 0);
+
+			LZMADecoder coder = new LZMADecoder();
+			using (FileStream input = new FileStream(fileName, FileMode.Open))
+			{
+				input.Seek(HeaderTypeLength, SeekOrigin.Begin);
+				input.Read(header, HeaderTypeLength, HeaderVersionLength + HeaderSizeLength);
+
+				// Read the decompressed file size.
+				byte[] fileLengthBytes = new byte[HeaderSizeLength];
+				input.Seek(HeaderTypeLength + HeaderVersionLength, SeekOrigin.Begin);
+				input.Read(fileLengthBytes, 0, fileLengthBytes.Length);
+				int fileLength = BitConverter.ToInt32(fileLengthBytes, 0);
+
+				input.Seek(HeaderLength + HeaderLZMACompressedSizeLength, SeekOrigin.Begin);
+
+				using (FileStream output = new FileStream(targetFileName, FileMode.Create))
+				{
+					output.Write(header, 0, header.Length);
+
+					// Read the decoder properties
+					byte[] properties = new byte[5];
+					input.Read(properties, 0, 5);
+
+
+					coder.SetDecoderProperties(properties);
+					coder.Code(input, output, input.Length, fileLength, null);
+				}
+			}
 		}
 
 		private static byte[] CombineBytes(params byte[][] arrays)
