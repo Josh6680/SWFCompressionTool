@@ -92,7 +92,7 @@ namespace SWFCompressionTool
 			using (BinaryReader reader = new BinaryReader(new FileStream(fileName, FileMode.Open)))
 			{
 				reader.BaseStream.Seek(HeaderTypeLength, SeekOrigin.Begin);
-				reader.Read(header, HeaderTypeLength, HeaderSizeLength);
+				reader.Read(header, HeaderTypeLength, HeaderVersionLength + HeaderSizeLength);
 
 				reader.BaseStream.Seek(HeaderLength, SeekOrigin.Begin);
 				byte[] data = new byte[reader.BaseStream.Length - HeaderLength];
